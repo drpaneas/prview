@@ -51,7 +51,7 @@ func (c *Client) FetchPR(ctx context.Context, input model.PRInput) (*model.PRDat
 		blames = nil // non-fatal
 	}
 
-	authorProfile := c.fetchAuthorProfile(ctx, input, meta.Author)
+	authorProfile := c.fetchAuthorProfile(ctx, input, meta.Author, pr.GetAuthorAssociation())
 
 	return &model.PRData{
 		Meta:      meta,
@@ -158,7 +158,7 @@ func (c *Client) getFileAtRef(ctx context.Context, input model.PRInput, path, re
 	return model.FileContent{Path: path, Content: content, SHA: ref}, nil
 }
 
-func (c *Client) fetchAuthorProfile(ctx context.Context, input model.PRInput, author string) model.AuthorProfile {
+func (c *Client) fetchAuthorProfile(ctx context.Context, input model.PRInput, author, association string) model.AuthorProfile {
 	profile := model.AuthorProfile{Login: author}
 
 	query := fmt.Sprintf("is:pr author:%s repo:%s/%s is:merged", author, input.Owner, input.Repo)
@@ -185,7 +185,13 @@ func (c *Client) fetchAuthorProfile(ctx context.Context, input model.PRInput, au
 		}
 	}
 
-	profile.IsFirstTime = profile.MergedPRs == 0
+	switch association {
+	case "OWNER", "MEMBER", "COLLABORATOR":
+		profile.IsFirstTime = false
+	default:
+		profile.IsFirstTime = profile.MergedPRs == 0
+	}
+
 	profile.TopAreas = c.fetchAuthorTopAreas(ctx, input, author)
 
 	return profile
