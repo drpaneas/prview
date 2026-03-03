@@ -140,42 +140,6 @@ type ASTResult struct {
 	NewExports []string
 }
 
-type CoverageStatus int
-
-const (
-	CoverageCovered CoverageStatus = iota
-	CoverageNotTested
-	CoverageNoTestFile
-)
-
-func (c CoverageStatus) String() string {
-	switch c {
-	case CoverageCovered:
-		return "covered"
-	case CoverageNotTested:
-		return "not tested"
-	case CoverageNoTestFile:
-		return "no test file"
-	default:
-		return "unknown"
-	}
-}
-
-type FuncCoverage struct {
-	FuncName string
-	File     string
-	TestFile string
-	TestFunc string
-	Status   CoverageStatus
-}
-
-type CoverageResult struct {
-	TestRatio float64
-	TestLines int
-	ImplLines int
-	Functions []FuncCoverage
-}
-
 type RiskFlag struct {
 	Severity    Severity
 	File        string
@@ -291,20 +255,18 @@ type AISlopResult struct {
 }
 
 type PRReport struct {
-	Input         PRInput
-	Meta          PRMetadata
-	Scope         ScopeResult
-	Classify      ClassifyResult
-	AST           ASTResult
-	Coverage      CoverageResult
-	Risks         []RiskFlag
-	Reviewers     []Reviewer
-	Architecture  ArchResult
-	ReviewFocus   []ReviewFocus
-	Verdict       Verdict
-	VerdictNote   string
-	Author        AuthorProfile
-	AI            *AIAnalysis
-	AISlop        *AISlopResult
-	PersonaReview string
+	Input        PRInput
+	Meta         PRMetadata
+	Scope        ScopeResult
+	Classify     ClassifyResult
+	AST          ASTResult
+	Risks        []RiskFlag
+	Reviewers    []Reviewer
+	Architecture ArchResult
+	ReviewFocus  []ReviewFocus
+	Verdict      Verdict
+	VerdictNote  string
+	Author       AuthorProfile
+	AI           *AIAnalysis
+	AISlop       *AISlopResult
 }

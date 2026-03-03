@@ -13,15 +13,15 @@ import (
 	"github.com/drpaneas/prview/internal/aislop"
 	"github.com/drpaneas/prview/internal/analyzer"
 	ghclient "github.com/drpaneas/prview/internal/github"
+	"github.com/drpaneas/prview/internal/markdown"
 	"github.com/drpaneas/prview/internal/model"
-	"github.com/drpaneas/prview/internal/persona"
 	"github.com/drpaneas/prview/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 var (
-	personaDir string
-	modelName  string
+	modelName string
+	dryRun    bool
 )
 
 var rootCmd = &cobra.Command{
@@ -34,8 +34,8 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.Flags().StringVar(&personaDir, "persona-dir", "", "directory with pre-crawled devlica personas (required when reviewers are found)")
-	rootCmd.Flags().StringVar(&modelName, "model", ai.DefaultModel, "Anthropic model to use")
+	rootCmd.Flags().StringVar(&modelName, "model", "", "AI model to use (default depends on provider)")
+	rootCmd.Flags().BoolVar(&dryRun, "dry-run", false, "print markdown to stdout instead of launching TUI")
 }
 
 func Execute() {
@@ -50,9 +50,10 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("GITHUB_TOKEN environment variable is required.\nSet it with: export GITHUB_TOKEN=your_token")
 	}
 
+	geminiKey := os.Getenv("GEMINI_API_KEY")
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
-	if anthropicKey == "" {
-		return fmt.Errorf("ANTHROPIC_API_KEY environment variable is required.\nSet it with: export ANTHROPIC_API_KEY=your_key")
+	if geminiKey == "" && anthropicKey == "" {
+		return fmt.Errorf("set GEMINI_API_KEY or ANTHROPIC_API_KEY environment variable")
 	}
 
 	input, err := ParsePRInput(args[0])
@@ -77,7 +78,12 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	risks := analyzer.PreComputeRisks(data)
 
 	// Run AI analysis and aislop detection in parallel
-	aiClient := ai.NewClient(anthropicKey, modelName)
+	var aiClient ai.Caller
+	if geminiKey != "" {
+		aiClient = ai.NewGeminiClient(geminiKey, modelName)
+	} else {
+		aiClient = ai.NewAnthropicClient(anthropicKey, modelName)
+	}
 	var aiAnalysis *model.AIAnalysis
 	var aiErr error
 	var slopResult *model.AISlopResult
@@ -97,7 +103,11 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 	go func() {
 		defer wg.Done()
-		slopResult, slopErr = aislop.Detect(ctx, prURL)
+		provider := "claude"
+		if geminiKey != "" {
+			provider = "gemini"
+		}
+		slopResult, slopErr = aislop.Detect(ctx, prURL, provider)
 	}()
 
 	wg.Wait()
@@ -115,20 +125,9 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	report.Input = input
 	report.AISlop = slopResult
 
-	// Persona-based review from suggested reviewers
-	if len(report.Reviewers) > 0 {
-		if personaDir == "" {
-			fmt.Fprintf(os.Stderr, "Skipping persona review: --persona-dir not set (run 'devlica <username>' to generate personas)\n")
-		} else {
-			stop = startSpinner("Generating persona-based review")
-			personaReview, err := persona.GenerateReview(ctx, aiClient, personaDir, report.Reviewers, report)
-			stop()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: persona review: %v\n", err)
-			} else {
-				report.PersonaReview = personaReview
-			}
-		}
+	if dryRun {
+		fmt.Print(markdown.Render(report))
+		return nil
 	}
 
 	return ui.Run(report)
@@ -152,6 +151,10 @@ func ParsePRInput(raw string) (model.PRInput, error) {
 }
 
 func startSpinner(msg string) func() {
+	if dryRun {
+		fmt.Fprintf(os.Stderr, "%s...\n", msg)
+		return func() {}
+	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	var mu sync.Mutex
 	done := false
@@ -164,7 +167,7 @@ func startSpinner(msg string) func() {
 				return
 			}
 			mu.Unlock()
-			fmt.Printf("\r%s %s...", frames[i%len(frames)], msg)
+			fmt.Fprintf(os.Stderr, "\r%s %s...", frames[i%len(frames)], msg)
 			i++
 			time.Sleep(80 * time.Millisecond)
 		}
@@ -173,6 +176,6 @@ func startSpinner(msg string) func() {
 		mu.Lock()
 		done = true
 		mu.Unlock()
-		fmt.Print("\r\033[K")
+		fmt.Fprint(os.Stderr, "\r\033[K")
 	}
 }

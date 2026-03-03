@@ -25,13 +25,10 @@ func renderReport(r *model.PRReport, width int) string {
 	sb.WriteString("\n")
 	sb.WriteString(renderReviewQuestions(r))
 	sb.WriteString("\n")
-	sb.WriteString(renderTestAssessment(r))
-	sb.WriteString("\n")
 	sb.WriteString(renderRisks(r))
 	sb.WriteString("\n")
 	sb.WriteString(renderReviewers(r))
 	sb.WriteString("\n")
-	sb.WriteString(renderPersonaReview(r))
 	sb.WriteString(renderVerdict(r))
 
 	return sb.String()
@@ -193,19 +190,6 @@ func renderScope(r *model.PRReport) string {
 	}
 	sb.WriteString(fmt.Sprintf("  Complexity: %s\n", complexity))
 
-	sb.WriteString("\n")
-	maxBarWidth := 22
-	for _, ds := range r.Scope.DirBreakdown {
-		filled := int(ds.Percentage / 100 * float64(maxBarWidth))
-		if filled < 1 && ds.LinesAdded > 0 {
-			filled = 1
-		}
-		bar := barFull.Render(strings.Repeat("█", filled)) + barEmpty.Render(strings.Repeat("░", maxBarWidth-filled))
-		sb.WriteString(fmt.Sprintf("  %-30s %s  +%-4d (%2.0f%%)\n",
-			ds.Dir, bar, ds.LinesAdded, ds.Percentage,
-		))
-	}
-
 	return sb.String()
 }
 
@@ -258,37 +242,32 @@ func renderBeforeAfter(r *model.PRReport) string {
 }
 
 func renderAIIssues(r *model.PRReport) string {
-	var sb strings.Builder
+	if r.AI == nil {
+		return ""
+	}
 
+	var high []model.AIIssue
+	for _, issue := range r.AI.Issues {
+		if issue.Severity == model.SeverityHigh {
+			high = append(high, issue)
+		}
+	}
+	if len(high) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
 	sb.WriteString(sectionTitleStyle.Render(" POTENTIAL ISSUES (AI)"))
 	sb.WriteString("\n")
 
-	if r.AI == nil || len(r.AI.Issues) == 0 {
-		sb.WriteString(greenText.Render("  No issues identified by AI"))
-		sb.WriteString("\n")
-		return sb.String()
-	}
-
-	for _, issue := range r.AI.Issues {
-		var icon, label string
-		switch issue.Severity {
-		case model.SeverityHigh:
-			icon = redText.Render("●")
-			label = redText.Render("HIGH")
-		case model.SeverityMedium:
-			icon = yellowText.Render("●")
-			label = yellowText.Render("MEDIUM")
-		default:
-			icon = dimText.Render("●")
-			label = dimText.Render("LOW")
-		}
-
+	for _, issue := range high {
 		loc := ""
 		if issue.File != "" {
 			loc = fmt.Sprintf("%s:%d", issue.File, issue.Line)
 		}
 
-		sb.WriteString(fmt.Sprintf("\n  %s %s  %s\n", icon, label, dimText.Render(loc)))
+		sb.WriteString(fmt.Sprintf("\n  %s %s  %s\n",
+			redText.Render("●"), redText.Render("HIGH"), dimText.Render(loc)))
 
 		if issue.WhatChanged != "" {
 			sb.WriteString(fmt.Sprintf("    %s ", boldText.Render("What changed:")))
@@ -359,58 +338,6 @@ func renderReviewQuestions(r *model.PRReport) string {
 				dimText.Render("Verify:"),
 				q.HowVerify,
 			))
-		}
-	}
-
-	return sb.String()
-}
-
-func renderTestAssessment(r *model.PRReport) string {
-	var sb strings.Builder
-
-	sb.WriteString(sectionTitleStyle.Render(" TEST COVERAGE"))
-	sb.WriteString("\n")
-
-	if r.AI != nil {
-		if r.AI.TestVerdict.Sufficient {
-			sb.WriteString(fmt.Sprintf("  %s\n", greenText.Render("SUFFICIENT")))
-		} else {
-			sb.WriteString(fmt.Sprintf("  %s\n", redText.Render("INSUFFICIENT")))
-		}
-		if r.AI.TestVerdict.Summary != "" {
-			for _, line := range wrapText(r.AI.TestVerdict.Summary, 74) {
-				sb.WriteString(fmt.Sprintf("  %s\n", dimText.Render(line)))
-			}
-		}
-	}
-
-	if r.AI != nil && len(r.AI.TestVerdict.KeyTestFiles) > 0 {
-		sb.WriteString(fmt.Sprintf("\n  %s\n", boldText.Render("Key test files to review:")))
-		for _, f := range r.AI.TestVerdict.KeyTestFiles {
-			sb.WriteString(fmt.Sprintf("    %s\n", blueText.Render(f)))
-		}
-	}
-
-	if r.AI != nil && len(r.AI.TestVerdict.CriticalUntested) > 0 {
-		sb.WriteString(fmt.Sprintf("\n  %s\n", redText.Render("Critical paths without tests:")))
-		for _, cp := range r.AI.TestVerdict.CriticalUntested {
-			sb.WriteString(fmt.Sprintf("\n    %s %s\n", redText.Render("-"), boldText.Render(cp.Path)))
-			if cp.WhyCritical != "" {
-				sb.WriteString(fmt.Sprintf("      %s %s\n", dimText.Render("Why:"), cp.WhyCritical))
-			}
-			if cp.RegressionRisk != "" {
-				sb.WriteString(fmt.Sprintf("      %s %s\n", yellowText.Render("Regression risk:"), cp.RegressionRisk))
-			}
-		}
-	}
-
-	if r.AI != nil && len(r.AI.TestVerdict.MissingScenarios) > 0 {
-		sb.WriteString(fmt.Sprintf("\n  %s\n", yellowText.Render("Missing test scenarios:")))
-		for _, ms := range r.AI.TestVerdict.MissingScenarios {
-			sb.WriteString(fmt.Sprintf("\n    %s %s\n", yellowText.Render("-"), boldText.Render(ms.Scenario)))
-			if ms.WhyNeeded != "" {
-				sb.WriteString(fmt.Sprintf("      %s %s\n", dimText.Render("Risk:"), ms.WhyNeeded))
-			}
 		}
 	}
 
@@ -515,30 +442,6 @@ func renderReviewers(r *model.PRReport) string {
 		sb.WriteString(fmt.Sprintf("  ├─ %s\n", rev.Reason))
 		sb.WriteString(fmt.Sprintf("  ├─ Last active: %s\n", dimText.Render(rev.LastActive)))
 		sb.WriteString(fmt.Sprintf("  └─ Review: %s\n", dimText.Render(strings.Join(rev.Files, ", "))))
-	}
-
-	return sb.String()
-}
-
-func renderPersonaReview(r *model.PRReport) string {
-	if r.PersonaReview == "" {
-		return ""
-	}
-
-	var sb strings.Builder
-
-	sb.WriteString("\n")
-	sb.WriteString(sectionTitleStyle.Render(" AI PR REVIEW (informed by domain experts)"))
-	sb.WriteString("\n\n")
-
-	for _, line := range strings.Split(r.PersonaReview, "\n") {
-		if strings.TrimSpace(line) == "" {
-			sb.WriteString("\n")
-			continue
-		}
-		for _, wrapped := range wrapText(line, 76) {
-			sb.WriteString(fmt.Sprintf("  %s\n", wrapped))
-		}
 	}
 
 	return sb.String()

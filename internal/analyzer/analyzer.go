@@ -11,13 +11,12 @@ func Analyze(data *model.PRData, aiAnalysis *model.AIAnalysis) *model.PRReport {
 	scope := AnalyzeScope(data.Diffs)
 	classify := ClassifyChange(data.Diffs, data.Meta)
 	astResult := AnalyzeAST(data.BaseFiles, data.HeadFiles)
-	coverage := AnalyzeCoverage(data.Diffs, data.HeadFiles, astResult)
 	risks := DetectRisks(data.Diffs, data.HeadFiles)
 	reviewers := SuggestReviewers(data.Blames, data.Meta.Author)
 	arch := AnalyzeArchitecture(data.Diffs, data.BaseFiles, data.HeadFiles, astResult)
 
-	focus := buildReviewFocus(risks, coverage, scope)
-	verdict, note := computeVerdict(risks, coverage, scope)
+	focus := buildReviewFocus(risks, scope)
+	verdict, note := computeVerdict(risks, scope)
 
 	if aiAnalysis != nil && aiAnalysis.Verdict != "" {
 		switch aiAnalysis.Verdict {
@@ -36,7 +35,6 @@ func Analyze(data *model.PRData, aiAnalysis *model.AIAnalysis) *model.PRReport {
 		Scope:        scope,
 		Classify:     classify,
 		AST:          astResult,
-		Coverage:     coverage,
 		Risks:        risks,
 		Reviewers:    reviewers,
 		Architecture: arch,
@@ -54,17 +52,10 @@ func PreComputeRisks(data *model.PRData) []model.RiskFlag {
 	return DetectRisks(data.Diffs, data.HeadFiles)
 }
 
-func buildReviewFocus(risks []model.RiskFlag, coverage model.CoverageResult, scope model.ScopeResult) []model.ReviewFocus {
+func buildReviewFocus(risks []model.RiskFlag, scope model.ScopeResult) []model.ReviewFocus {
 	fileRisks := map[string][]model.RiskFlag{}
 	for _, r := range risks {
 		fileRisks[r.File] = append(fileRisks[r.File], r)
-	}
-
-	fileUntested := map[string][]string{}
-	for _, fc := range coverage.Functions {
-		if fc.Status != model.CoverageCovered {
-			fileUntested[fc.File] = append(fileUntested[fc.File], fc.FuncName)
-		}
 	}
 
 	type fileScore struct {
@@ -72,7 +63,6 @@ func buildReviewFocus(risks []model.RiskFlag, coverage model.CoverageResult, sco
 		score int
 	}
 	var scored []fileScore
-	seen := map[string]bool{}
 
 	for file, rr := range fileRisks {
 		s := 0
@@ -86,18 +76,7 @@ func buildReviewFocus(risks []model.RiskFlag, coverage model.CoverageResult, sco
 				s += 1
 			}
 		}
-		if fns, ok := fileUntested[file]; ok {
-			s += len(fns) * 2
-		}
 		scored = append(scored, fileScore{file: file, score: s})
-		seen[file] = true
-	}
-
-	for file, fns := range fileUntested {
-		if seen[file] {
-			continue
-		}
-		scored = append(scored, fileScore{file: file, score: len(fns) * 2})
 	}
 
 	sort.Slice(scored, func(i, j int) bool {
@@ -123,16 +102,8 @@ func buildReviewFocus(risks []model.RiskFlag, coverage model.CoverageResult, sco
 		for _, r := range fileRisks[s.file] {
 			lookFor = append(lookFor, fmt.Sprintf("%s (line %d)", r.Description, r.Line))
 		}
-		if fns, ok := fileUntested[s.file]; ok {
-			for _, fn := range fns {
-				lookFor = append(lookFor, fmt.Sprintf("untested function: %s", fn))
-			}
-		}
 
 		why := fmt.Sprintf("%d risk flag(s)", len(fileRisks[s.file]))
-		if untested, ok := fileUntested[s.file]; ok {
-			why += fmt.Sprintf(", %d untested function(s)", len(untested))
-		}
 
 		focus = append(focus, model.ReviewFocus{
 			File:     s.file,
@@ -145,7 +116,7 @@ func buildReviewFocus(risks []model.RiskFlag, coverage model.CoverageResult, sco
 	return focus
 }
 
-func computeVerdict(risks []model.RiskFlag, coverage model.CoverageResult, scope model.ScopeResult) (model.Verdict, string) {
+func computeVerdict(risks []model.RiskFlag, scope model.ScopeResult) (model.Verdict, string) {
 	highRisks := 0
 	medRisks := 0
 	for _, r := range risks {
@@ -157,24 +128,17 @@ func computeVerdict(risks []model.RiskFlag, coverage model.CoverageResult, scope
 		}
 	}
 
-	untestedCount := 0
-	for _, fc := range coverage.Functions {
-		if fc.Status != model.CoverageCovered {
-			untestedCount++
-		}
-	}
-
-	if highRisks >= 2 || (highRisks >= 1 && untestedCount >= 3) {
+	if highRisks >= 2 {
 		return model.VerdictRequestChanges, fmt.Sprintf(
-			"%d high-risk issue(s), %d untested function(s)",
-			highRisks, untestedCount,
+			"%d high-risk issue(s) detected",
+			highRisks,
 		)
 	}
 
-	if highRisks >= 1 || medRisks >= 3 || untestedCount >= 2 {
+	if highRisks >= 1 || medRisks >= 3 {
 		return model.VerdictDiscuss, fmt.Sprintf(
-			"%d risk flag(s), %d untested function(s) - review carefully",
-			highRisks+medRisks, untestedCount,
+			"%d risk flag(s) - review carefully",
+			highRisks+medRisks,
 		)
 	}
 

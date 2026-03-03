@@ -1,111 +1,12 @@
 package ai
 
-import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
+import "context"
+
+type Caller interface {
+	Call(ctx context.Context, system, prompt string) (string, error)
+}
+
+const (
+	DefaultAnthropicModel = "claude-sonnet-4-20250514"
+	DefaultGeminiModel    = "gemini-2.5-flash"
 )
-
-const apiURL = "https://api.anthropic.com/v1/messages"
-
-const DefaultModel = "claude-sonnet-4-20250514"
-
-type Client struct {
-	apiKey     string
-	model      string
-	httpClient *http.Client
-}
-
-func NewClient(apiKey, model string) *Client {
-	if model == "" {
-		model = DefaultModel
-	}
-	return &Client{
-		apiKey:     apiKey,
-		model:      model,
-		httpClient: &http.Client{},
-	}
-}
-
-type message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type request struct {
-	Model     string    `json:"model"`
-	MaxTokens int       `json:"max_tokens"`
-	System    string    `json:"system"`
-	Messages  []message `json:"messages"`
-}
-
-type contentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type response struct {
-	Content []contentBlock `json:"content"`
-	Error   *struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
-func (c *Client) Call(ctx context.Context, system, prompt string) (string, error) {
-	req := request{
-		Model:     c.model,
-		MaxTokens: 4096,
-		System:    system,
-		Messages: []message{
-			{Role: "user", Content: prompt},
-		},
-	}
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return "", fmt.Errorf("marshaling request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("creating request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", c.apiKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("calling Anthropic API: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("reading response: %w", err)
-	}
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("Anthropic API error (status %d): %s", resp.StatusCode, string(respBody))
-	}
-
-	var apiResp response
-	if err := json.Unmarshal(respBody, &apiResp); err != nil {
-		return "", fmt.Errorf("parsing response: %w", err)
-	}
-
-	if apiResp.Error != nil {
-		return "", fmt.Errorf("API error: %s: %s", apiResp.Error.Type, apiResp.Error.Message)
-	}
-
-	if len(apiResp.Content) == 0 {
-		return "", fmt.Errorf("empty response from API")
-	}
-
-	return apiResp.Content[0].Text, nil
-}

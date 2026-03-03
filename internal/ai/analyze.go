@@ -94,7 +94,7 @@ Rules:
   - Be honest: if a defer Close() is fine because the resource is managed elsewhere, say so.
   - If the heuristic found a real issue, confirm it and explain why it matters here.`
 
-func AnalyzePR(ctx context.Context, client *Client, data *model.PRData, risks []model.RiskFlag) (*model.AIAnalysis, error) {
+func AnalyzePR(ctx context.Context, client Caller, data *model.PRData, risks []model.RiskFlag) (*model.AIAnalysis, error) {
 	prompt := buildPrompt(data, risks)
 
 	raw, err := client.Call(ctx, systemPrompt, prompt)
